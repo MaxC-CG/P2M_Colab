@@ -1,0 +1,13 @@
+torchvision>=0.4
+fvcore
+
+[all]
+matplotlib
+tqdm>4.29.0
+imageio
+ipywidgets
+
+[dev]
+flake8
+isort
+black==19.3b0
