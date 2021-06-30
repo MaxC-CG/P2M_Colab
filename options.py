@@ -3,7 +3,7 @@ import os
 import numpy as np
 import torch
 
-MANIFOLD_DIR = r'../PWM/'  # path to manifold software (https://github.com/hjwdzh/Manifold)
+MANIFOLD_DIR = r'./PWM/build/'  # path to manifold software (https://github.com/hjwdzh/Manifold)
 
 
 class Options:
