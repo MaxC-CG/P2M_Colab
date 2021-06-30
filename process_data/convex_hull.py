@@ -41,7 +41,7 @@ def check_args(args):
         if not (args.blender_path / 'blender').exists():
             raise FileNotFoundError('can\' find blender')
     else:
-        if not (args.manifold_path / 'manifold').exists():
+        if not (args.manifold_path / 'manifold.exe').exists():
             raise FileNotFoundError('can\' find manifold software')
 
         if not (args.manifold_path / 'simplify.exe').exists():
