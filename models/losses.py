@@ -6,38 +6,29 @@ from pytorch3d.ops.knn import knn_gather, knn_points
 from typing import Union
 import torch.nn.functional as F
 
+# 判断输入是否正确
 def _validate_chamfer_reduction_inputs(
     batch_reduction: Union[str, None], point_reduction: str
 ):
-    """Check the requested reductions are valid.
-
-    Args:
-        batch_reduction: Reduction operation to apply for the loss across the
-            batch, can be one of ["mean", "sum"] or None.
-        point_reduction: Reduction operation to apply for the loss across the
-            points, can be one of ["mean", "sum"].
-    """
+    # batch_reduction只接受["mean", "sum"]或None
     if batch_reduction is not None and batch_reduction not in ["mean", "sum"]:
         raise ValueError('batch_reduction must be one of ["mean", "sum"] or None')
+    # point_reduction只接受["mean", "sum"]
     if point_reduction not in ["mean", "sum"]:
         raise ValueError('point_reduction must be one of ["mean", "sum"]')
 
-
+# 确定输入的点云是否为Pointclouds的实例
 def _handle_pointcloud_input(
     points: Union[torch.Tensor, Pointclouds],
     lengths: Union[torch.Tensor, None],
     normals: Union[torch.Tensor, None],
 ):
-    """
-    If points is an instance of Pointclouds, retrieve the padded points tensor
-    along with the number of points per batch and the padded normals.
-    Otherwise, return the input points (and normals) with the number of points per cloud
-    set to the size of the second dimension of `points`.
-    """
+    # 若是就填充每一批点的数量和法向
     if isinstance(points, Pointclouds):
         X = points.points_padded()
         lengths = points.num_points_per_cloud()
-        normals = points.normals_padded()  # either a tensor or None
+        normals = points.normals_padded()  # 为张量或是None
+    # 否则返回每个点云点的个数(基于第二个维度)
     elif torch.is_tensor(points):
         if points.ndim != 3:
             raise ValueError("Expected points to be of shape (N, P, D)")
@@ -60,6 +51,7 @@ def _handle_pointcloud_input(
         )
     return X, lengths, normals
 
+# 计算倒角距离(用于估计两个点云的偏差)
 def chamfer_distance(
     x,
     y,
@@ -71,39 +63,8 @@ def chamfer_distance(
     batch_reduction: Union[str, None] = "mean",
     point_reduction: str = "mean",
     unoriented=False,
-):
-    """
-    Chamfer distance between two pointclouds x and y.
+): # 输入两个点云以及相关缩减规模的参数
 
-    Args:
-        x: FloatTensor of shape (N, P1, D) or a Pointclouds object representing
-            a batch of point clouds with at most P1 points in each batch element,
-            batch size N and feature dimension D.
-        y: FloatTensor of shape (N, P2, D) or a Pointclouds object representing
-            a batch of point clouds with at most P2 points in each batch element,
-            batch size N and feature dimension D.
-        x_lengths: Optional LongTensor of shape (N,) giving the number of points in each
-            cloud in x.
-        y_lengths: Optional LongTensor of shape (N,) giving the number of points in each
-            cloud in x.
-        x_normals: Optional FloatTensor of shape (N, P1, D).
-        y_normals: Optional FloatTensor of shape (N, P2, D).
-        weights: Optional FloatTensor of shape (N,) giving weights for
-            batch elements for reduction operation.
-        batch_reduction: Reduction operation to apply for the loss across the
-            batch, can be one of ["mean", "sum"] or None.
-        point_reduction: Reduction operation to apply for the loss across the
-            points, can be one of ["mean", "sum"].
-
-    Returns:
-        2-element tuple containing
-
-        - **loss**: Tensor giving the reduced distance between the pointclouds
-          in x and the pointclouds in y.
-        - **loss_normals**: Tensor giving the reduced cosine distance of normals
-          between pointclouds in x and pointclouds in y. Returns None if
-          x_normals and y_normals are None.
-    """
     _validate_chamfer_reduction_inputs(batch_reduction, point_reduction)
 
     x, x_lengths, x_normals = _handle_pointcloud_input(x, x_lengths, x_normals)
@@ -114,15 +75,15 @@ def chamfer_distance(
     N, P1, D = x.shape
     P2 = y.shape[1]
 
-    # Check if inputs are heterogeneous and create a lengths mask.
+    # 检查输入是否异构并创建长度掩码
     is_x_heterogeneous = (x_lengths != P1).any()
     is_y_heterogeneous = (y_lengths != P2).any()
     x_mask = (
         torch.arange(P1, device=x.device)[None] >= x_lengths[:, None]
-    )  # shape [N, P1]
+    )
     y_mask = (
         torch.arange(P2, device=y.device)[None] >= y_lengths[:, None]
-    )  # shape [N, P2]
+    )
 
     if y.shape[0] != N or y.shape[2] != D:
         raise ValueError("y does not have the correct shape.")
@@ -146,8 +107,8 @@ def chamfer_distance(
     x_nn = knn_points(x, y, lengths1=x_lengths, lengths2=y_lengths, K=1)
     y_nn = knn_points(y, x, lengths1=y_lengths, lengths2=x_lengths, K=1)
 
-    cham_x = x_nn.dists[..., 0]  # (N, P1)
-    cham_y = y_nn.dists[..., 0]  # (N, P2)
+    cham_x = x_nn.dists[..., 0]
+    cham_y = y_nn.dists[..., 0]
 
     eps = 0
     cham_x = torch.sqrt(cham_x + eps)
@@ -163,16 +124,10 @@ def chamfer_distance(
         cham_y *= weights.view(N, 1)
 
     if return_normals:
-        # Gather the normals using the indices and keep only value for k=0
+        # 根据索引得到法向
         x_normals_near = knn_gather(y_normals, x_nn.idx, y_lengths)[..., 0, :]
         y_normals_near = knn_gather(x_normals, y_nn.idx, x_lengths)[..., 0, :]
 
-        # cham_norm_x = 1 - torch.abs(
-        #     F.cosine_similarity(x_normals, x_normals_near, dim=2, eps=1e-6)
-        # )
-        # cham_norm_y = 1 - torch.abs(
-        #     F.cosine_similarity(y_normals, y_normals_near, dim=2, eps=1e-6)
-        # )
         cham_norm_x = F.cosine_similarity(x_normals, x_normals_near, dim=2, eps=1e-6)
         cham_norm_y = F.cosine_similarity(y_normals, y_normals_near, dim=2, eps=1e-6)
         if unoriented:
@@ -191,12 +146,12 @@ def chamfer_distance(
             cham_norm_x *= weights.view(N, 1)
             cham_norm_y *= weights.view(N, 1)
 
-    # Apply point reduction
-    cham_x = cham_x.sum(1)  # (N,)
-    cham_y = cham_y.sum(1)  # (N,)
+    # 减少点的数量
+    cham_x = cham_x.sum(1)
+    cham_y = cham_y.sum(1)
     if return_normals:
-        cham_norm_x = cham_norm_x.sum(1)  # (N,)
-        cham_norm_y = cham_norm_y.sum(1)  # (N,)
+        cham_norm_x = cham_norm_x.sum(1)
+        cham_norm_y = cham_norm_y.sum(1)
     if point_reduction == "mean":
         cham_x /= x_lengths
         cham_y /= y_lengths
@@ -204,8 +159,8 @@ def chamfer_distance(
             cham_norm_x /= x_lengths
             cham_norm_y /= y_lengths
 
+    # 减少批的规模
     if batch_reduction is not None:
-        # batch_reduction == "sum"
         cham_x = cham_x.sum()
         cham_y = cham_y.sum()
         if return_normals:
@@ -222,6 +177,7 @@ def chamfer_distance(
     cham_dist = cham_x + cham_y
     cham_normals = cham_norm_x + cham_norm_y if return_normals else None
 
+    # 返回距离差以及法线之间的余弦距离差
     return cham_dist, cham_normals
 
 
@@ -235,7 +191,7 @@ class ZeroNanGrad(torch.autograd.Function):
         grad[grad != grad] = 0
         return grad
 
-
+# 计算Beam Loss
 class BeamGapLoss:
     def __init__(self, device):
         self.device = device
